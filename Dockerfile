@@ -1,10 +1,11 @@
 FROM php:8.2-apache
 
-# Install system dependencies and PHP PDO MySQL extension
+# Install system dependencies and PHP PDO MySQL & PostgreSQL extensions
 RUN apt-get update && apt-get install -y \
     libzip-dev \
     zip \
-    && docker-php-ext-install pdo pdo_mysql
+    libpq-dev \
+    && docker-php-ext-install pdo pdo_mysql pdo_pgsql
 
 # Enable Apache mod_rewrite for clean URLs
 RUN a2enmod rewrite
