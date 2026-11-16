@@ -3,7 +3,7 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 require_once __DIR__ . '/../includes/auth.php';
-require_once __DIR__ . '/../config/Database.php';
+require_once __DIR__ . '/../config/database.php';
 requireLogin();
 
 $pdo = Database::connect();
@@ -30,16 +30,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_farm'])) {
     $farmName = trim($_POST['farm_name']);
     $location = trim($_POST['location']);
     $sizeHectares = trim($_POST['size_hectares']);
+    $irrigationType = trim($_POST['irrigation_type']);
 
     if (!empty($farmerId) && !empty($farmName)) {
         try {
-            // Flexible insert handling both size_hectares and size column variations
             try {
-                $stmt = $pdo->prepare("INSERT INTO farm (farmer_id, farm_name, location, size_hectares) VALUES (?, ?, ?, ?)");
-                $stmt->execute([$farmerId, $farmName, $location, $sizeHectares]);
+                $stmt = $pdo->prepare("INSERT INTO farm (farmer_id, farm_name, location, size_hectares, irrigation_type) VALUES (?, ?, ?, ?, ?)");
+                $stmt->execute([$farmerId, $farmName, $location, $sizeHectares, $irrigationType]);
             } catch (PDOException $ex) {
-                $stmt = $pdo->prepare("INSERT INTO farm (farmer_id, farm_name, location, size) VALUES (?, ?, ?, ?)");
-                $stmt->execute([$farmerId, $farmName, $location, $sizeHectares]);
+                $stmt = $pdo->prepare("INSERT INTO farm (farmer_id, farm_name, location, size, irrigation_type) VALUES (?, ?, ?, ?, ?)");
+                $stmt->execute([$farmerId, $farmName, $location, $sizeHectares, $irrigationType]);
             }
             header("Location: farms.php?status=added");
             exit();
@@ -60,15 +60,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_farm'])) {
     $farmName = trim($_POST['farm_name']);
     $location = trim($_POST['location']);
     $sizeHectares = trim($_POST['size_hectares']);
+    $irrigationType = trim($_POST['irrigation_type']);
 
     if (!empty($farmId) && !empty($farmerId) && !empty($farmName)) {
         try {
             try {
-                $stmt = $pdo->prepare("UPDATE farm SET farmer_id = ?, farm_name = ?, location = ?, size_hectares = ? WHERE farm_id = ?");
-                $stmt->execute([$farmerId, $farmName, $location, $sizeHectares, $farmId]);
+                $stmt = $pdo->prepare("UPDATE farm SET farmer_id = ?, farm_name = ?, location = ?, size_hectares = ?, irrigation_type = ? WHERE farm_id = ?");
+                $stmt->execute([$farmerId, $farmName, $location, $sizeHectares, $irrigationType, $farmId]);
             } catch (PDOException $ex) {
-                $stmt = $pdo->prepare("UPDATE farm SET farmer_id = ?, farm_name = ?, location = ?, size = ? WHERE farm_id = ?");
-                $stmt->execute([$farmerId, $farmName, $location, $sizeHectares, $farmId]);
+                $stmt = $pdo->prepare("UPDATE farm SET farmer_id = ?, farm_name = ?, location = ?, size = ?, irrigation_type = ? WHERE farm_id = ?");
+                $stmt->execute([$farmerId, $farmName, $location, $sizeHectares, $irrigationType, $farmId]);
             }
             header("Location: farms.php?status=updated");
             exit();
@@ -91,6 +92,7 @@ elseif ($status === 'delete_error') { $popupMessage = "Cannot delete farm: Activ
 elseif ($status === 'add_error' || $status === 'update_error' || $status === 'empty_error') { $popupMessage = "Operation failed. Please check inputs."; $popupType = "error"; }
 
 $search = trim($_GET['search'] ?? '');
+$irrigationFilter = trim($_GET['irrigation_filter'] ?? '');
 
 try {
     $sql = "SELECT f.*, fr.first_name, fr.last_name FROM farm f JOIN farmer fr ON f.farmer_id = fr.farmer_id WHERE 1=1";
@@ -99,6 +101,10 @@ try {
         $sql .= " AND (f.farm_name ILIKE ? OR f.location ILIKE ? OR fr.first_name ILIKE ? OR fr.last_name ILIKE ?)";
         $searchTerm = "%{$search}%";
         array_push($params, $searchTerm, $searchTerm, $searchTerm, $searchTerm);
+    }
+    if (!empty($irrigationFilter)) {
+        $sql .= " AND f.irrigation_type = ?";
+        array_push($params, $irrigationFilter);
     }
     $sql .= " ORDER BY f.farm_id ASC";
     $stmt = $pdo->prepare($sql);
@@ -114,6 +120,9 @@ try {
 } catch (PDOException $e) {
     $farmersList = [];
 }
+
+// Allowed Irrigation Types list based on system standards
+$irrigationTypesList = ['Irrigated', 'Rainfed', 'Drip Irrigation', 'Sprinkler'];
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -158,9 +167,12 @@ try {
                     <h1 class="h3 fw-bold text-dark mb-0">Farms Directory</h1>
                     <span class="badge bg-success text-white px-3 py-1.5 rounded-pill small fw-semibold"><?= $totalFarms ?> Registered</span>
                 </div>
-                <p class="text-muted small mb-0">Manage registered farm locations, owners, and land areas.</p>
+                <p class="text-muted small mb-0">Manage registered farm locations, owners, land areas, and irrigation types.</p>
             </div>
-            <div>
+            <div class="d-flex gap-2">
+                <button class="btn btn-outline-primary px-3 py-2 shadow-sm d-flex align-items-center gap-2" data-bs-toggle="modal" data-bs-target="#filterModal">
+                    <i class="bi bi-filter fs-5"></i><span>Filter</span>
+                </button>
                 <button class="btn btn-primary px-4 py-2 shadow-sm d-flex align-items-center gap-2" data-bs-toggle="modal" data-bs-target="#addFarmModal">
                     <i class="bi bi-plus-circle-fill fs-5"></i><span>Add New Farm</span>
                 </button>
@@ -170,6 +182,7 @@ try {
 
     <div class="card border-0 shadow-sm rounded-3 p-3 mb-4 bg-white">
         <form method="GET" action="farms.php" class="row g-3 align-items-center">
+            <input type="hidden" name="irrigation_filter" value="<?= htmlspecialchars($irrigationFilter) ?>">
             <div class="col-md-10">
                 <div class="input-group">
                     <span class="input-group-text bg-light border-end-0 text-muted"><i class="bi bi-search"></i></span>
@@ -178,11 +191,17 @@ try {
             </div>
             <div class="col-md-2 d-flex gap-2">
                 <button type="submit" class="btn btn-primary w-100">Search</button>
-                <?php if (!empty($search)): ?>
-                    <a href="farms.php" class="btn btn-outline-secondary" title="Reset"><i class="bi bi-arrow-counterclockwise"></i></a>
+                <?php if (!empty($search) || !empty($irrigationFilter)): ?>
+                    <a href="farms.php" class="btn btn-outline-secondary" title="Reset Filters"><i class="bi bi-arrow-counterclockwise"></i></a>
                 <?php endif; ?>
             </div>
         </form>
+        <?php if (!empty($irrigationFilter)): ?>
+            <div class="mt-2 d-flex align-items-center gap-2">
+                <span class="small text-muted">Active Filter: Irrigation Type = <strong class="text-dark"><?= htmlspecialchars($irrigationFilter) ?></strong></span>
+                <a href="farms.php<?= !empty($search) ? '?search=' . urlencode($search) : '' ?>" class="badge bg-danger text-decoration-none">Clear Filter</a>
+            </div>
+        <?php endif; ?>
     </div>
 
     <div class="card table-card border-0 bg-white">
@@ -196,6 +215,7 @@ try {
                             <th class="py-3">Owner / Farmer</th>
                             <th class="py-3">Location</th>
                             <th class="py-3">Size (Hectares)</th>
+                            <th class="py-3">Irrigation Type</th>
                             <th class="py-3 pe-4 text-end">Actions</th>
                         </tr>
                     </thead>
@@ -229,6 +249,13 @@ try {
                                     <td><?= htmlspecialchars($f['first_name'] . ' ' . $f['last_name']) ?></td>
                                     <td class="text-muted small"><?= htmlspecialchars($f['location'] ?? 'N/A') ?></td>
                                     <td class="fw-semibold text-primary"><?= number_format((float)$sizeVal, 2) ?> ha</td>
+                                    <td>
+                                        <?php if (!empty($f['irrigation_type'])): ?>
+                                            <span class="badge bg-info text-dark"><?= htmlspecialchars($f['irrigation_type']) ?></span>
+                                        <?php else: ?>
+                                            <span class="text-muted small">N/A</span>
+                                        <?php endif; ?>
+                                    </td>
                                     <td class="pe-4 text-end">
                                         <div class="btn-group" role="group">
                                             <!-- View Button -->
@@ -237,7 +264,8 @@ try {
                                                     data-name="<?= htmlspecialchars($f['farm_name'], ENT_QUOTES) ?>"
                                                     data-owner="<?= htmlspecialchars($f['first_name'] . ' ' . $f['last_name'], ENT_QUOTES) ?>"
                                                     data-location="<?= htmlspecialchars($f['location'] ?? 'N/A', ENT_QUOTES) ?>"
-                                                    data-size="<?= number_format((float)$sizeVal, 2) ?>">
+                                                    data-size="<?= number_format((float)$sizeVal, 2) ?>"
+                                                    data-irrigation="<?= htmlspecialchars($f['irrigation_type'] ?? 'N/A', ENT_QUOTES) ?>">
                                                 <i class="bi bi-eye"></i>
                                             </button>
                                             <!-- Edit Button -->
@@ -247,7 +275,8 @@ try {
                                                     data-farmer-id="<?= $f['farmer_id'] ?>" 
                                                     data-name="<?= htmlspecialchars($f['farm_name'], ENT_QUOTES) ?>"
                                                     data-location="<?= htmlspecialchars($f['location'] ?? '', ENT_QUOTES) ?>" 
-                                                    data-size="<?= $sizeVal ?>">
+                                                    data-size="<?= $sizeVal ?>"
+                                                    data-irrigation="<?= htmlspecialchars($f['irrigation_type'] ?? '', ENT_QUOTES) ?>">
                                                 <i class="bi bi-pencil"></i>
                                             </button>
                                             <!-- Delete Button -->
@@ -262,7 +291,7 @@ try {
                                 </tr>
                             <?php endforeach; ?>
                         <?php else: ?>
-                            <tr><td colspan="6" class="text-center text-muted py-5"><p class="mb-0 fw-semibold">No farms found.</p></td></tr>
+                            <tr><td colspan="7" class="text-center text-muted py-5"><p class="mb-0 fw-semibold">No farms found.</p></td></tr>
                         <?php endif; ?>
                     </tbody>
                 </table>
@@ -302,10 +331,49 @@ try {
                         <label class="form-label fw-semibold text-secondary small text-uppercase">Size (Hectares)</label>
                         <input type="number" step="0.01" class="form-control form-control-lg fs-6" name="size_hectares" placeholder="e.g. 5.50" required>
                     </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold text-secondary small text-uppercase">Irrigation Type</label>
+                        <select class="form-select form-select-lg fs-6" name="irrigation_type" required>
+                            <option value="" selected disabled>Select irrigation type...</option>
+                            <?php foreach ($irrigationTypesList as $it): ?>
+                                <option value="<?= $it ?>"><?= $it ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
                 </div>
                 <div class="modal-footer bg-light p-3 px-4">
                     <button type="button" class="btn btn-outline-secondary px-4" data-bs-dismiss="modal">Cancel</button>
                     <button type="submit" name="add_farm" class="btn btn-primary px-4">Save Farm</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Filter Modal -->
+<div class="modal fade" id="filterModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg rounded-4 overflow-hidden">
+            <form method="GET" action="farms.php">
+                <input type="hidden" name="search" value="<?= htmlspecialchars($search) ?>">
+                <div class="modal-header bg-secondary text-white p-4">
+                    <h5 class="modal-title fw-bold"><i class="bi bi-filter me-2"></i> Filter Farms by Irrigation Type</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold text-secondary small text-uppercase">Select Irrigation Type</label>
+                        <select class="form-select form-select-lg fs-6" name="irrigation_filter">
+                            <option value="">All Irrigation Types</option>
+                            <?php foreach ($irrigationTypesList as $it): ?>
+                                <option value="<?= $it ?>" <?= $irrigationFilter === $it ? 'selected' : '' ?>><?= $it ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light p-3 px-4 justify-content-between">
+                    <a href="farms.php<?= !empty($search) ? '?search=' . urlencode($search) : '' ?>" class="btn btn-outline-danger">Clear Filter</a>
+                    <button type="submit" class="btn btn-primary px-4">Apply Filter</button>
                 </div>
             </form>
         </div>
@@ -337,6 +405,10 @@ try {
                     <li class="list-group-item d-flex justify-content-between align-items-center py-3">
                         <span class="text-muted fw-semibold">Land Size</span>
                         <span id="viewSize" class="text-primary fw-bold"></span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center py-3">
+                        <span class="text-muted fw-semibold">Irrigation Type</span>
+                        <span id="viewIrrigation" class="badge bg-info text-dark"></span>
                     </li>
                 </ul>
             </div>
@@ -377,6 +449,14 @@ try {
                     <div class="mb-3">
                         <label class="form-label fw-semibold text-secondary small text-uppercase">Size (Hectares)</label>
                         <input type="number" step="0.01" class="form-control form-control-lg fs-6" name="size_hectares" id="editSizeHectares" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold text-secondary small text-uppercase">Irrigation Type</label>
+                        <select class="form-select form-select-lg fs-6" name="irrigation_type" id="editIrrigationType" required>
+                            <?php foreach ($irrigationTypesList as $it): ?>
+                                <option value="<?= $it ?>"><?= $it ?></option>
+                            <?php endforeach; ?>
+                        </select>
                     </div>
                 </div>
                 <div class="modal-footer bg-light p-3 px-4">
@@ -436,6 +516,7 @@ try {
             document.getElementById('viewOwner').textContent = button.getAttribute('data-owner');
             document.getElementById('viewLocation').textContent = button.getAttribute('data-location');
             document.getElementById('viewSize').textContent = button.getAttribute('data-size') + ' hectares';
+            document.getElementById('viewIrrigation').textContent = button.getAttribute('data-irrigation');
         });
     }
 
@@ -449,6 +530,17 @@ try {
             document.getElementById('editFarmName').value = button.getAttribute('data-name');
             document.getElementById('editLocation').value = button.getAttribute('data-location');
             document.getElementById('editSizeHectares').value = button.getAttribute('data-size');
+            document.getElementById('editIrrigationType').value = button.getAttribute('data-irrigation');
+        });
+    }
+
+    // Handle Delete Modal Data Binding
+    const deleteModal = document.getElementById('deleteModal');
+    if (deleteModal) {
+        deleteModal.addEventListener('show.bs.modal', function (event) {
+            const button = event.relatedTarget;
+            document.getElementById('deleteFarmName').textContent = button.getAttribute('data-name');
+            document.getElementById('confirmDeleteBtn').href = 'farms.php?delete_id=' + button.getAttribute('data-id');
         });
     }
 
