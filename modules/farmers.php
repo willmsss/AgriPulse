@@ -3,7 +3,7 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 require_once __DIR__ . '/../includes/auth.php';
-require_once __DIR__ . '/../config/Database.php';
+require_once __DIR__ . '/../config/database.php';
 requireLogin();
 
 $pdo = Database::connect();
@@ -90,10 +90,11 @@ if ($status === 'added') {
     $popupType = "error";
 }
 
-// Search parameter
+// Search and Filter parameters
 $search = trim($_GET['search'] ?? '');
+$addressFilter = trim($_GET['address_filter'] ?? '');
 
-// Build dynamic SQL query with search support
+// Build dynamic SQL query with search and address filter support
 try {
     $sql = "SELECT * FROM farmer WHERE 1=1";
     $params = [];
@@ -102,6 +103,11 @@ try {
         $sql .= " AND (first_name ILIKE ? OR last_name ILIKE ? OR contact_number ILIKE ? OR address ILIKE ?)";
         $searchTerm = "%{$search}%";
         array_push($params, $searchTerm, $searchTerm, $searchTerm, $searchTerm);
+    }
+
+    if (!empty($addressFilter)) {
+        $sql .= " AND address = ?";
+        array_push($params, $addressFilter);
     }
 
     $sql .= " ORDER BY farmer_id ASC";
@@ -113,6 +119,13 @@ try {
 } catch (PDOException $e) {
     $farmers = [];
     $totalFarmers = 0;
+}
+
+// Fetch unique addresses for the filter dropdown
+try {
+    $addressesList = $pdo->query("SELECT DISTINCT address FROM farmer WHERE address IS NOT NULL AND address != '' ORDER BY address ASC")->fetchAll(PDO::FETCH_COLUMN);
+} catch (PDOException $e) {
+    $addressesList = [];
 }
 ?>
 <!DOCTYPE html>
@@ -160,7 +173,10 @@ try {
                 </div>
                 <p class="text-muted small mb-0">Manage registered farmers, monitor contact information, and handle records efficiently.</p>
             </div>
-            <div>
+            <div class="d-flex gap-2">
+                <button class="btn btn-outline-primary px-3 py-2 shadow-sm d-flex align-items-center gap-2" data-bs-toggle="modal" data-bs-target="#filterModal">
+                    <i class="bi bi-filter fs-5"></i><span>Filter</span>
+                </button>
                 <button class="btn btn-primary px-4 py-2 shadow-sm d-flex align-items-center gap-2" data-bs-toggle="modal" data-bs-target="#addFarmerModal">
                     <i class="bi bi-person-plus-fill fs-5"></i><span>Add New Farmer</span>
                 </button>
@@ -170,6 +186,7 @@ try {
 
     <div class="card border-0 shadow-sm rounded-3 p-3 mb-4 bg-white">
         <form method="GET" action="farmers.php" class="row g-3 align-items-center">
+            <input type="hidden" name="address_filter" value="<?= htmlspecialchars($addressFilter) ?>">
             <div class="col-md-10">
                 <div class="input-group">
                     <span class="input-group-text bg-light border-end-0 text-muted"><i class="bi bi-search"></i></span>
@@ -178,11 +195,17 @@ try {
             </div>
             <div class="col-md-2 d-flex gap-2">
                 <button type="submit" class="btn btn-primary w-100">Search</button>
-                <?php if (!empty($search)): ?>
+                <?php if (!empty($search) || !empty($addressFilter)): ?>
                     <a href="farmers.php" class="btn btn-outline-secondary" title="Reset"><i class="bi bi-arrow-counterclockwise"></i></a>
                 <?php endif; ?>
             </div>
         </form>
+        <?php if (!empty($addressFilter)): ?>
+            <div class="mt-2 d-flex align-items-center gap-2">
+                <span class="small text-muted">Active Filter: Address = <strong class="text-dark"><?= htmlspecialchars($addressFilter) ?></strong></span>
+                <a href="farmers.php<?= !empty($search) ? '?search=' . urlencode($search) : '' ?>" class="badge bg-danger text-decoration-none">Clear Filter</a>
+            </div>
+        <?php endif; ?>
     </div>
 
     <div class="card table-card border-0 bg-white">
@@ -296,6 +319,36 @@ try {
                 <div class="modal-footer bg-light p-3 px-4">
                     <button type="button" class="btn btn-outline-secondary px-4" data-bs-dismiss="modal">Cancel</button>
                     <button type="submit" name="add_farmer" class="btn btn-primary px-4">Save Farmer</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Filter Modal -->
+<div class="modal fade" id="filterModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg rounded-4 overflow-hidden">
+            <form method="GET" action="farmers.php">
+                <input type="hidden" name="search" value="<?= htmlspecialchars($search) ?>">
+                <div class="modal-header bg-secondary text-white p-4">
+                    <h5 class="modal-title fw-bold"><i class="bi bi-filter me-2"></i> Filter Farmers by Address</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold text-secondary small text-uppercase">Select Address / Location</label>
+                        <select class="form-select form-select-lg fs-6" name="address_filter">
+                            <option value="">All Addresses</option>
+                            <?php foreach ($addressesList as $addr): ?>
+                                <option value="<?= htmlspecialchars($addr) ?>" <?= $addressFilter === $addr ? 'selected' : '' ?>><?= htmlspecialchars($addr) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light p-3 px-4 justify-content-between">
+                    <a href="farmers.php<?= !empty($search) ? '?search=' . urlencode($search) : '' ?>" class="btn btn-outline-danger">Clear Filter</a>
+                    <button type="submit" class="btn btn-primary px-4">Apply Filter</button>
                 </div>
             </form>
         </div>
@@ -440,6 +493,16 @@ try {
             document.getElementById('editLastName').value = button.getAttribute('data-last-name');
             document.getElementById('editContactNumber').value = button.getAttribute('data-contact');
             document.getElementById('editAddress').value = button.getAttribute('data-address');
+        });
+    }
+
+    // Handle Delete Modal Data Binding
+    const deleteModal = document.getElementById('deleteModal');
+    if (deleteModal) {
+        deleteModal.addEventListener('show.bs.modal', function (event) {
+            const button = event.relatedTarget;
+            document.getElementById('deleteFarmerName').textContent = button.getAttribute('data-name');
+            document.getElementById('confirmDeleteBtn').href = 'farmers.php?delete_id=' + button.getAttribute('data-id');
         });
     }
 
