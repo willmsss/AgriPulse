@@ -3,7 +3,7 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 require_once __DIR__ . '/../includes/auth.php';
-require_once __DIR__ . '/../config/Database.php';
+require_once __DIR__ . '/../config/database.php';
 requireLogin();
 
 $pdo = Database::connect();
@@ -26,17 +26,28 @@ if (isset($_GET['delete_id'])) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_crop'])) {
     $cropName = trim($_POST['crop_name']);
     $variety = trim($_POST['variety']);
+    $cropCategory = trim($_POST['crop_category']);
     $growingPeriodDays = trim($_POST['growing_period_days']);
+    $recommendedSeason = trim($_POST['recommended_season']);
 
     if (!empty($cropName)) {
         try {
-            $stmt = $pdo->prepare("INSERT INTO crop (crop_name, variety, growing_period_days) VALUES (?, ?, ?)");
-            $stmt->execute([$cropName, $variety, $growingPeriodDays]);
+            // Flexible query handling columns if they exist in schema variations
+            $stmt = $pdo->prepare("INSERT INTO crop (crop_name, variety, crop_category, growing_period_days, recommended_season) VALUES (?, ?, ?, ?, ?)");
+            $stmt->execute([$cropName, $variety, $cropCategory, $growingPeriodDays, $recommendedSeason]);
             header("Location: crops.php?status=added");
             exit();
         } catch (PDOException $e) {
-            header("Location: crops.php?status=add_error");
-            exit();
+            try {
+                // Fallback for base schema without extra category/season columns
+                $stmt = $pdo->prepare("INSERT INTO crop (crop_name, variety, growing_period_days) VALUES (?, ?, ?)");
+                $stmt->execute([$cropName, $variety, $growingPeriodDays]);
+                header("Location: crops.php?status=added");
+                exit();
+            } catch (PDOException $ex) {
+                header("Location: crops.php?status=add_error");
+                exit();
+            }
         }
     } else {
         header("Location: crops.php?status=empty_error");
@@ -48,17 +59,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_crop'])) {
     $cropId = trim($_POST['crop_id']);
     $cropName = trim($_POST['crop_name']);
     $variety = trim($_POST['variety']);
+    $cropCategory = trim($_POST['crop_category']);
     $growingPeriodDays = trim($_POST['growing_period_days']);
+    $recommendedSeason = trim($_POST['recommended_season']);
 
     if (!empty($cropId) && !empty($cropName)) {
         try {
-            $stmt = $pdo->prepare("UPDATE crop SET crop_name = ?, variety = ?, growing_period_days = ? WHERE crop_id = ?");
-            $stmt->execute([$cropName, $variety, $growingPeriodDays, $cropId]);
+            $stmt = $pdo->prepare("UPDATE crop SET crop_name = ?, variety = ?, crop_category = ?, growing_period_days = ?, recommended_season = ? WHERE crop_id = ?");
+            $stmt->execute([$cropName, $variety, $cropCategory, $growingPeriodDays, $recommendedSeason, $cropId]);
             header("Location: crops.php?status=updated");
             exit();
         } catch (PDOException $e) {
-            header("Location: crops.php?status=update_error");
-            exit();
+            try {
+                $stmt = $pdo->prepare("UPDATE crop SET crop_name = ?, variety = ?, growing_period_days = ? WHERE crop_id = ?");
+                $stmt->execute([$cropName, $variety, $growingPeriodDays, $cropId]);
+                header("Location: crops.php?status=updated");
+                exit();
+            } catch (PDOException $ex) {
+                header("Location: crops.php?status=update_error");
+                exit();
+            }
         }
     } else {
         header("Location: crops.php?status=empty_error");
@@ -74,6 +94,9 @@ elseif ($status === 'delete_error') { $popupMessage = "Cannot delete crop: Activ
 elseif ($status === 'add_error' || $status === 'update_error' || $status === 'empty_error') { $popupMessage = "Operation failed."; $popupType = "error"; }
 
 $search = trim($_GET['search'] ?? '');
+$categoryFilter = trim($_GET['category_filter'] ?? '');
+$seasonFilter = trim($_GET['season_filter'] ?? '');
+
 try {
     $sql = "SELECT * FROM crop WHERE 1=1";
     $params = [];
@@ -81,6 +104,14 @@ try {
         $sql .= " AND (crop_name ILIKE ? OR variety ILIKE ?)";
         $searchTerm = "%{$search}%";
         array_push($params, $searchTerm, $searchTerm);
+    }
+    if (!empty($categoryFilter)) {
+        $sql .= " AND (crop_category ILIKE ? OR category ILIKE ?)";
+        array_push($params, $categoryFilter, $categoryFilter);
+    }
+    if (!empty($seasonFilter)) {
+        $sql .= " AND recommended_season ILIKE ?";
+        array_push($params, $seasonFilter);
     }
     $sql .= " ORDER BY crop_id ASC";
     $stmt = $pdo->prepare($sql);
@@ -90,6 +121,10 @@ try {
 } catch (PDOException $e) {
     $crops = []; $totalCrops = 0;
 }
+
+// Standardized Lookup Lists
+$categoriesList = ['Cereal', 'Vegetable', 'Root Crop', 'Fruit', 'Legume', 'Industrial'];
+$seasonsList = ['Wet Season', 'Dry Season', 'Year-Round'];
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -134,9 +169,12 @@ try {
                     <h1 class="h3 fw-bold text-dark mb-0">Crops Master Directory</h1>
                     <span class="badge bg-warning text-dark px-3 py-1.5 rounded-pill small fw-semibold"><?= $totalCrops ?> Registered</span>
                 </div>
-                <p class="text-muted small mb-0">Manage crop types, varieties, and growing periods.</p>
+                <p class="text-muted small mb-0">Manage crop types, varieties, categories, growing periods, and recommended seasons.</p>
             </div>
-            <div>
+            <div class="d-flex gap-2">
+                <button class="btn btn-outline-warning text-dark px-3 py-2 shadow-sm d-flex align-items-center gap-2" data-bs-toggle="modal" data-bs-target="#filterModal">
+                    <i class="bi bi-filter fs-5"></i><span>Filter</span>
+                </button>
                 <button class="btn btn-primary px-4 py-2 shadow-sm d-flex align-items-center gap-2" data-bs-toggle="modal" data-bs-target="#addCropModal">
                     <i class="bi bi-plus-circle-fill fs-5"></i><span>Add New Crop</span>
                 </button>
@@ -146,6 +184,8 @@ try {
 
     <div class="card border-0 shadow-sm rounded-3 p-3 mb-4 bg-white">
         <form method="GET" action="crops.php" class="row g-3 align-items-center">
+            <input type="hidden" name="category_filter" value="<?= htmlspecialchars($categoryFilter) ?>">
+            <input type="hidden" name="season_filter" value="<?= htmlspecialchars($seasonFilter) ?>">
             <div class="col-md-10">
                 <div class="input-group">
                     <span class="input-group-text bg-light border-end-0 text-muted"><i class="bi bi-search"></i></span>
@@ -154,11 +194,23 @@ try {
             </div>
             <div class="col-md-2 d-flex gap-2">
                 <button type="submit" class="btn btn-primary w-100">Search</button>
-                <?php if (!empty($search)): ?>
+                <?php if (!empty($search) || !empty($categoryFilter) || !empty($seasonFilter)): ?>
                     <a href="crops.php" class="btn btn-outline-secondary" title="Reset"><i class="bi bi-arrow-counterclockwise"></i></a>
                 <?php endif; ?>
             </div>
         </form>
+        <?php if (!empty($categoryFilter) || !empty($seasonFilter)): ?>
+            <div class="mt-2 d-flex align-items-center gap-2 flex-wrap">
+                <span class="small text-muted">Active Filters:</span>
+                <?php if (!empty($categoryFilter)): ?>
+                    <span class="badge bg-secondary">Category: <?= htmlspecialchars($categoryFilter) ?></span>
+                <?php endif; ?>
+                <?php if (!empty($seasonFilter)): ?>
+                    <span class="badge bg-secondary">Season: <?= htmlspecialchars($seasonFilter) ?></span>
+                <?php endif; ?>
+                <a href="crops.php<?= !empty($search) ? '?search=' . urlencode($search) : '' ?>" class="badge bg-danger text-decoration-none">Clear Filters</a>
+            </div>
+        <?php endif; ?>
     </div>
 
     <div class="card table-card border-0 bg-white">
@@ -170,7 +222,9 @@ try {
                             <th class="py-3 ps-4">No.</th>
                             <th class="py-3">Crop Name</th>
                             <th class="py-3">Variety</th>
-                            <th class="py-3">Growing Period (Days)</th>
+                            <th class="py-3">Category</th>
+                            <th class="py-3">Growing Period</th>
+                            <th class="py-3">Season</th>
                             <th class="py-3 pe-4 text-end">Actions</th>
                         </tr>
                     </thead>
@@ -178,25 +232,37 @@ try {
                         <?php if (!empty($crops)): ?>
                             <?php $counter = 1; ?>
                             <?php foreach ($crops as $c): ?>
+                                <?php
+                                    $catVal = $c['crop_category'] ?? ($c['category'] ?? 'N/A');
+                                    $seasVal = $c['recommended_season'] ?? 'N/A';
+                                ?>
                                 <tr>
                                     <td class="ps-4"><span class="badge bg-light text-secondary border px-2 py-1 fw-bold">#<?= $counter++ ?></span></td>
                                     <td class="fw-bold text-dark"><i class="bi bi-flower1 text-warning me-1"></i><?= htmlspecialchars($c['crop_name']) ?></td>
                                     <td><?= htmlspecialchars($c['variety'] ?? 'N/A') ?></td>
+                                    <td><span class="badge bg-light text-dark border"><?= htmlspecialchars($catVal) ?></span></td>
                                     <td class="text-muted small"><?= htmlspecialchars($c['growing_period_days'] ?? 'N/A') ?> days</td>
+                                    <td><span class="badge bg-info text-dark"><?= htmlspecialchars($seasVal) ?></span></td>
                                     <td class="pe-4 text-end">
-                                        <div class="btn-group">
+                                        <div class="btn-group" role="group">
                                             <!-- View Button -->
                                             <button type="button" class="btn btn-sm btn-outline-info px-2 py-1" title="View Details"
                                                     data-bs-toggle="modal" data-bs-target="#viewModal"
                                                     data-name="<?= htmlspecialchars($c['crop_name'], ENT_QUOTES) ?>"
                                                     data-variety="<?= htmlspecialchars($c['variety'] ?? 'N/A', ENT_QUOTES) ?>"
-                                                    data-days="<?= htmlspecialchars($c['growing_period_days'] ?? 'N/A', ENT_QUOTES) ?>">
+                                                    data-category="<?= htmlspecialchars($catVal, ENT_QUOTES) ?>"
+                                                    data-days="<?= htmlspecialchars($c['growing_period_days'] ?? 'N/A', ENT_QUOTES) ?>"
+                                                    data-season="<?= htmlspecialchars($seasVal, ENT_QUOTES) ?>">
                                                 <i class="bi bi-eye"></i>
                                             </button>
                                             <!-- Edit Button -->
                                             <button type="button" class="btn btn-sm btn-outline-warning px-2 py-1" title="Edit Record" data-bs-toggle="modal" data-bs-target="#editModal"
-                                                    data-id="<?= $c['crop_id'] ?>" data-name="<?= htmlspecialchars($c['crop_name'], ENT_QUOTES) ?>"
-                                                    data-variety="<?= htmlspecialchars($c['variety'] ?? '', ENT_QUOTES) ?>" data-days="<?= $c['growing_period_days'] ?>">
+                                                    data-id="<?= $c['crop_id'] ?>" 
+                                                    data-name="<?= htmlspecialchars($c['crop_name'], ENT_QUOTES) ?>"
+                                                    data-variety="<?= htmlspecialchars($c['variety'] ?? '', ENT_QUOTES) ?>" 
+                                                    data-category="<?= htmlspecialchars($catVal, ENT_QUOTES) ?>"
+                                                    data-days="<?= $c['growing_period_days'] ?? '' ?>"
+                                                    data-season="<?= htmlspecialchars($seasVal, ENT_QUOTES) ?>">
                                                 <i class="bi bi-pencil"></i>
                                             </button>
                                             <!-- Delete Button -->
@@ -209,7 +275,7 @@ try {
                                 </tr>
                             <?php endforeach; ?>
                         <?php else: ?>
-                            <tr><td colspan="5" class="text-center text-muted py-5"><p class="mb-0 fw-semibold">No crops found.</p></td></tr>
+                            <tr><td colspan="7" class="text-center text-muted py-5"><p class="mb-0 fw-semibold">No crops found.</p></td></tr>
                         <?php endif; ?>
                     </tbody>
                 </table>
@@ -237,13 +303,70 @@ try {
                         <input type="text" class="form-control form-control-lg fs-6" name="variety" placeholder="e.g. Roma">
                     </div>
                     <div class="mb-3">
+                        <label class="form-label fw-semibold text-secondary small text-uppercase">Crop Category</label>
+                        <select class="form-select form-select-lg fs-6" name="crop_category" required>
+                            <option value="" selected disabled>Select category...</option>
+                            <?php foreach ($categoriesList as $cat): ?>
+                                <option value="<?= $cat ?>"><?= $cat ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="mb-3">
                         <label class="form-label fw-semibold text-secondary small text-uppercase">Growing Period (Days)</label>
-                        <input type="number" class="form-control form-control-lg fs-6" name="growing_period_days" placeholder="e.g. 90">
+                        <input type="number" class="form-control form-control-lg fs-6" name="growing_period_days" placeholder="e.g. 90" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold text-secondary small text-uppercase">Recommended Season</label>
+                        <select class="form-select form-select-lg fs-6" name="recommended_season" required>
+                            <option value="" selected disabled>Select season...</option>
+                            <?php foreach ($seasonsList as $seas): ?>
+                                <option value="<?= $seas ?>"><?= $seas ?></option>
+                            <?php endforeach; ?>
+                        </select>
                     </div>
                 </div>
                 <div class="modal-footer bg-light p-3 px-4">
                     <button type="button" class="btn btn-outline-secondary px-4" data-bs-dismiss="modal">Cancel</button>
                     <button type="submit" name="add_crop" class="btn btn-primary px-4">Save Crop</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Filter Modal -->
+<div class="modal fade" id="filterModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg rounded-4 overflow-hidden">
+            <form method="GET" action="crops.php">
+                <input type="hidden" name="search" value="<?= htmlspecialchars($search) ?>">
+                <div class="modal-header bg-secondary text-white p-4">
+                    <h5 class="modal-title fw-bold"><i class="bi bi-filter me-2"></i> Filter Crops Directory</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold text-secondary small text-uppercase">Crop Category</label>
+                        <select class="form-select form-select-lg fs-6" name="category_filter">
+                            <option value="">All Categories</option>
+                            <?php foreach ($categoriesList as $cat): ?>
+                                <option value="<?= $cat ?>" <?= $categoryFilter === $cat ? 'selected' : '' ?>><?= $cat ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold text-secondary small text-uppercase">Recommended Season</label>
+                        <select class="form-select form-select-lg fs-6" name="season_filter">
+                            <option value="">All Seasons</option>
+                            <?php foreach ($seasonsList as $seas): ?>
+                                <option value="<?= $seas ?>" <?= $seasonFilter === $seas ? 'selected' : '' ?>><?= $seas ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light p-3 px-4 justify-content-between">
+                    <a href="crops.php<?= !empty($search) ? '?search=' . urlencode($search) : '' ?>" class="btn btn-outline-danger">Clear Filters</a>
+                    <button type="submit" class="btn btn-primary px-4">Apply Filter</button>
                 </div>
             </form>
         </div>
@@ -269,8 +392,16 @@ try {
                         <span id="viewVariety" class="text-dark"></span>
                     </li>
                     <li class="list-group-item d-flex justify-content-between align-items-center py-3">
+                        <span class="text-muted fw-semibold">Category</span>
+                        <span id="viewCategory" class="badge bg-light text-dark border"></span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center py-3">
                         <span class="text-muted fw-semibold">Growing Period</span>
                         <span id="viewDays" class="text-primary fw-bold"></span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center py-3">
+                        <span class="text-muted fw-semibold">Recommended Season</span>
+                        <span id="viewSeason" class="badge bg-info text-dark"></span>
                     </li>
                 </ul>
             </div>
@@ -301,8 +432,24 @@ try {
                         <input type="text" class="form-control form-control-lg fs-6" name="variety" id="editVariety">
                     </div>
                     <div class="mb-3">
+                        <label class="form-label fw-semibold text-secondary small text-uppercase">Crop Category</label>
+                        <select class="form-select form-select-lg fs-6" name="crop_category" id="editCropCategory" required>
+                            <?php foreach ($categoriesList as $cat): ?>
+                                <option value="<?= $cat ?>"><?= $cat ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="mb-3">
                         <label class="form-label fw-semibold text-secondary small text-uppercase">Growing Period (Days)</label>
-                        <input type="number" class="form-control form-control-lg fs-6" name="growing_period_days" id="editGrowingPeriodDays">
+                        <input type="number" class="form-control form-control-lg fs-6" name="growing_period_days" id="editGrowingPeriodDays" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold text-secondary small text-uppercase">Recommended Season</label>
+                        <select class="form-select form-select-lg fs-6" name="recommended_season" id="editRecommendedSeason" required>
+                            <?php foreach ($seasonsList as $seas): ?>
+                                <option value="<?= $seas ?>"><?= $seas ?></option>
+                            <?php endforeach; ?>
+                        </select>
                     </div>
                 </div>
                 <div class="modal-footer bg-light p-3 px-4">
@@ -360,7 +507,9 @@ try {
             const button = event.relatedTarget;
             document.getElementById('viewCropName').textContent = button.getAttribute('data-name');
             document.getElementById('viewVariety').textContent = button.getAttribute('data-variety');
+            document.getElementById('viewCategory').textContent = button.getAttribute('data-category');
             document.getElementById('viewDays').textContent = button.getAttribute('data-days') + ' days';
+            document.getElementById('viewSeason').textContent = button.getAttribute('data-season');
         });
     }
 
@@ -372,7 +521,19 @@ try {
             document.getElementById('editCropId').value = button.getAttribute('data-id');
             document.getElementById('editCropName').value = button.getAttribute('data-name');
             document.getElementById('editVariety').value = button.getAttribute('data-variety');
+            document.getElementById('editCropCategory').value = button.getAttribute('data-category');
             document.getElementById('editGrowingPeriodDays').value = button.getAttribute('data-days');
+            document.getElementById('editRecommendedSeason').value = button.getAttribute('data-season');
+        });
+    }
+
+    // Handle Delete Modal Data Binding
+    const deleteModal = document.getElementById('deleteModal');
+    if (deleteModal) {
+        deleteModal.addEventListener('show.bs.modal', function (event) {
+            const button = event.relatedTarget;
+            document.getElementById('deleteCropName').textContent = button.getAttribute('data-name');
+            document.getElementById('confirmDeleteBtn').href = 'crops.php?delete_id=' + button.getAttribute('data-id');
         });
     }
 
