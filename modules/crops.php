@@ -2,58 +2,19 @@
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
-require_once $_SERVER['DOCUMENT_ROOT'] . '/includes/auth.php';
-require_once $_SERVER['DOCUMENT_ROOT'] . '/config/Database.php';
+require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../config/Database.php';
 requireLogin();
 
-
-class crops {
-    private $pdo;
-
-    public function __construct($pdo) {
-        $this->pdo = $pdo;
-    }
-
-    public function delete($deleteId) {
-        $stmt = $this->pdo->prepare("DELETE FROM crop WHERE crop_id = ?");
-        return $stmt->execute([$deleteId]);
-    }
-
-    public function add($cropName, $variety, $growingPeriodDays) {
-        $stmt = $this->pdo->prepare("INSERT INTO crop (crop_name, variety, growing_period_days) VALUES (?, ?, ?)");
-        return $stmt->execute([$cropName, $variety, $growingPeriodDays]);
-    }
-
-    public function update($cropId, $cropName, $variety, $growingPeriodDays) {
-        $stmt = $this->pdo->prepare("UPDATE crop SET crop_name = ?, variety = ?, growing_period_days = ? WHERE crop_id = ?");
-        return $stmt->execute([$cropName, $variety, $growingPeriodDays, $cropId]);
-    }
-
-    public function getAll($search = '') {
-        $sql = "SELECT * FROM crop WHERE 1=1";
-        $params = [];
-        if (!empty($search)) {
-            $sql .= " AND (crop_name ILIKE ? OR variety ILIKE ?)";
-            $searchTerm = "%{$search}%";
-            array_push($params, $searchTerm, $searchTerm);
-        }
-        $sql .= " ORDER BY crop_id ASC";
-        $stmt = $this->pdo->prepare($sql);
-        $stmt->execute($params);
-        return $stmt->fetchAll();
-    }
-}
-
 $pdo = Database::connect();
-$cropObj = new crops($pdo);
-
 $popupMessage = '';
 $popupType = '';
 
 if (isset($_GET['delete_id'])) {
     $deleteId = $_GET['delete_id'];
     try {
-        $cropObj->delete($deleteId);
+        $stmt = $pdo->prepare("DELETE FROM crop WHERE crop_id = ?");
+        $stmt->execute([$deleteId]);
         header("Location: crops.php?status=deleted");
         exit();
     } catch (PDOException $e) {
@@ -69,7 +30,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_crop'])) {
 
     if (!empty($cropName)) {
         try {
-            $cropObj->add($cropName, $variety, $growingPeriodDays);
+            $stmt = $pdo->prepare("INSERT INTO crop (crop_name, variety, growing_period_days) VALUES (?, ?, ?)");
+            $stmt->execute([$cropName, $variety, $growingPeriodDays]);
             header("Location: crops.php?status=added");
             exit();
         } catch (PDOException $e) {
@@ -90,7 +52,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_crop'])) {
 
     if (!empty($cropId) && !empty($cropName)) {
         try {
-            $cropObj->update($cropId, $cropName, $variety, $growingPeriodDays);
+            $stmt = $pdo->prepare("UPDATE crop SET crop_name = ?, variety = ?, growing_period_days = ? WHERE crop_id = ?");
+            $stmt->execute([$cropName, $variety, $growingPeriodDays, $cropId]);
             header("Location: crops.php?status=updated");
             exit();
         } catch (PDOException $e) {
@@ -112,7 +75,17 @@ elseif ($status === 'add_error' || $status === 'update_error' || $status === 'em
 
 $search = trim($_GET['search'] ?? '');
 try {
-    $crops = $cropObj->getAll($search);
+    $sql = "SELECT * FROM crop WHERE 1=1";
+    $params = [];
+    if (!empty($search)) {
+        $sql .= " AND (crop_name ILIKE ? OR variety ILIKE ?)";
+        $searchTerm = "%{$search}%";
+        array_push($params, $searchTerm, $searchTerm);
+    }
+    $sql .= " ORDER BY crop_id ASC";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $crops = $stmt->fetchAll();
     $totalCrops = count($crops);
 } catch (PDOException $e) {
     $crops = []; $totalCrops = 0;
@@ -400,16 +373,6 @@ try {
             document.getElementById('editCropName').value = button.getAttribute('data-name');
             document.getElementById('editVariety').value = button.getAttribute('data-variety');
             document.getElementById('editGrowingPeriodDays').value = button.getAttribute('data-days');
-        });
-    }
-
-    // Handle Delete Modal Data Binding
-    const deleteModal = document.getElementById('deleteModal');
-    if (deleteModal) {
-        deleteModal.addEventListener('show.bs.modal', function (event) {
-            const button = event.relatedTarget;
-            document.getElementById('deleteCropName').textContent = button.getAttribute('data-name');
-            document.getElementById('confirmDeleteBtn').href = 'crops.php?delete_id=' + button.getAttribute('data-id');
         });
     }
 
