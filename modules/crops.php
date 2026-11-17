@@ -45,7 +45,7 @@ class crops {
 }
 
 $pdo = Database::connect();
-$cropObj = new Crop($pdo);
+$cropObj = new crops($pdo);
 
 $popupMessage = '';
 $popupType = '';
